@@ -7,7 +7,8 @@ import SensorContext from './contexts/SensorContext';
 
 const columns = [
   { label: 'Time', dataKey: 'time' },
-  { label: 'Speed (Km/h)', dataKey: 'speed', numeric: true },
+  { label: 'Speed Radar FMCW (cm/s)', dataKey: 'speedRadar', numeric: true },
+  { label: 'Speed Odometer (cm/s)', dataKey: 'speedOdometer', numeric: true },
   { label: 'Distance (Km)', dataKey: 'distance', numeric: true },
 ];
 
@@ -73,17 +74,28 @@ function rowContent(index, data) {
 }
 
 export default function HistoryPage() {
-  const { sensorData } = useContext(SensorContext);
+  const { sensorData, odoData } = useContext(SensorContext);
+
+  // Combine sensorData and odoData into a single array, sorted by timestamp
+  const combinedData = [...sensorData, ...odoData].sort((a, b) => a.date - b.date);
+
+  // Update combinedData to split the speed values appropriately
+  const updatedData = combinedData.map(data => ({
+    ...data,
+    speedRadar: data.speedRadar !== undefined ? data.speedRadar : null,
+    speedOdometer: data.speedOdometer !== undefined ? data.speedOdometer : null,
+    distance: data.distance !== undefined ? data.distance : 0,
+  }));
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       <Box sx={{ flex: 1, padding: '1rem', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <Paper sx={{ height: 'calc(100vh - 8rem)', width: '90%', overflow: 'hidden', marginBottom: '0.5rem', marginTop: '0.5rem' }}>
           <TableVirtuoso
-            data={sensorData}
+            data={updatedData}
             components={VirtuosoTableComponents}
             fixedHeaderContent={fixedHeaderContent}
-            itemContent={(index) => rowContent(index, sensorData)}
+            itemContent={(index) => rowContent(index, updatedData)}
           />
         </Paper>
       </Box>

@@ -3,6 +3,7 @@ import threading
 import time
 import json
 import csv
+import logging
 
 class Readspeed:
     def __init__(self, port, baud_rate, callback, csv_filename, timeout=1):
@@ -11,6 +12,9 @@ class Readspeed:
         self.callback = callback
         self.timeout = timeout  # Timeout in seconds
         self.csv_filename = csv_filename
+
+        # Set up logging
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
         # Open the CSV file in write mode and write the header
         self.csv_file = open(self.csv_filename, mode='w', newline='')
@@ -21,12 +25,12 @@ class Readspeed:
         start_time = time.time()
         while not self.stop_event.is_set():
             if time.time() - start_time > self.timeout:
-                print("Speed reading timed out. Stopping thread.")
+                logging.warning("Speed reading timed out. Stopping thread.")
                 return
             try:
                 line = self.serial_port.readline().decode('utf-8').strip()
             except UnicodeDecodeError as e:
-                print(f"Unicode decode error: {e}")
+                logging.error(f"Unicode decode error: {e}")
                 continue
 
             if line:  # Check if line is not empty
@@ -39,10 +43,12 @@ class Readspeed:
                     self.callback(speed)
                     # Write the timestamp and speed to the CSV file
                     self.csv_writer.writerow([timestamp, speed])
+                    # Log the data sent to websocket
+                    logging.info(f"Data sent to websocket: {data}")
                 except (ValueError, KeyError, json.JSONDecodeError) as e:
-                    print(f"Unable to process line: {line}. Error: {e}")
+                    logging.error(f"Unable to process line: {line}. Error: {e}")
             else:
-                print("No data received from the sensor. Returning from read_speed.")
+                logging.info("No data received from the sensor. Returning from read_speed.")
                 return  # Return from the method if no data is received
 
     def stop(self):
@@ -51,11 +57,11 @@ class Readspeed:
 
 # Example callback function
 def my_callback(speed):
-    print(f"Speed: {speed} km/h")
+    print(f"Speed: {speed} cm/s")
 
 # Example usage
 if __name__ == "__main__":
-    reader = Readspeed("COM15", 115200, my_callback, "speed_data.csv")
+    reader = Readspeed("/dev/ttyTHS1", 9600, my_callback, "speed_data.csv")
     read_thread = threading.Thread(target=reader.read_speed)
     read_thread.start()
 

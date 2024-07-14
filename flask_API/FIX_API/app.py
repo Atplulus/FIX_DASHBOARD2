@@ -1,3 +1,5 @@
+#socketcontext1
+
 import serial
 import threading
 from flask_cors import CORS
@@ -10,8 +12,9 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
 socketio = SocketIO(app, cors_allowed_origins='*')
 CORS(app, origins=["http://localhost:5173"])
+
 # Declare the serial port
-ser = serial.Serial('COM15', 9600)
+ser = serial.Serial('/dev/ttyTHS1', 9600)
 
 stop_event = threading.Event()
 callback = None

@@ -9,18 +9,17 @@ import SensorContext from './contexts/SensorContext';
 function Home() {
   const {
     sensorData,
-    socketConnected,
+    odoData,
+    socketConnected1,
+    socketConnected2,
     gaugeValue,
     totalDistance,
     currentTime,
-    rfidData,
-    kmhToMs
+    rfidData
   } = useContext(SensorContext);
 
-  // Define the maximum speed for the gauge
-  const MAX_SPEED = 350;
+  const MAX_SPEED = 120;
 
-  // Define the gauge limits with their respective colors
   const gaugeLimits = [
     { color: '#00ff00', limit: 80 },
     { color: '#ffff00', limit: 130 },
@@ -30,8 +29,6 @@ function Home() {
 
   const navigate = useNavigate();
   const validTotalDistance = !isNaN(totalDistance) ? totalDistance.toFixed(2) : '0.00';
-  const lastSensorData = sensorData.length > 0 ? sensorData[sensorData.length - 1].speed : 0;
-  const { value: convertedValue, unit: speedUnit } = kmhToMs(lastSensorData);
 
   return (
     <main className='main-container'>
@@ -48,7 +45,7 @@ function Home() {
           labels={{
             valueLabel: {
               fontSize: 40,
-              formatTextValue: value => `${value.toFixed(2)} Km/h`
+              formatTextValue: value => `${value.toFixed(2)} cm/s`
             }
           }}
           value={gaugeValue}
@@ -58,11 +55,20 @@ function Home() {
       <div className='main-cards'>
         <div className='card'>
           <div className='card-inner'>
-            <h3>Speed Rated</h3>
+            <h3>Speed Radar</h3>
           </div>
           <div className="d-flex align-items-center">
-            <h2 id='speedValue'>{convertedValue}</h2>
-            <span className="unit">{speedUnit}</span>
+            <h2 id='speedValue'>{sensorData.length > 0 && sensorData[sensorData.length - 1].speedRadar !== null ? sensorData[sensorData.length - 1].speedRadar : 'N/A'}</h2>
+            <span className="unit">cm/s</span>
+          </div>
+        </div>
+        <div className='card'>
+          <div className='card-inner'>
+            <h3>Speed Odometer</h3>
+          </div>
+          <div className="d-flex align-items-center">
+            <h2 id='speedValue'>{odoData.length > 0 && odoData[odoData.length - 1].speedOdometer !== null ? odoData[odoData.length - 1].speedOdometer : 'N/A'}</h2>
+            <span className="unit">cm/s</span>
           </div>
         </div>
         <div className='card'>
@@ -103,7 +109,7 @@ function Home() {
         <h3>Chart Speed Over Time</h3>
         <ResponsiveContainer width="100%" height={200}>
           <LineChart
-            data={sensorData}
+            data={sensorData.concat(odoData)} // Merge sensorData and odoData for the chart
             margin={{
               top: 5,
               right: 30,
@@ -112,14 +118,15 @@ function Home() {
             }}
           >
             <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="distance" label={{ value: "Distance (km)", position: 'insideBottomRight', offset: 0 }} />
-            <YAxis label={{ value: "Speed (km/h)", angle: -90, position: 'insideLeft', dx: 4, dy: 50 }}
-              domain={[0, 300]}
-              ticks={[0, 100, 200, 300]}
+            <XAxis dataKey="time" label={{ value: "Time", position: 'insideBottomRight', offset: 0 }} />
+            <YAxis label={{ value: "Speed (cm/s)", angle: -90, position: 'insideLeft', dx: 4, dy: 50 }}
+              domain={[0, MAX_SPEED]}
+              ticks={[0, 40, 80, 120]}
             />
             <Tooltip />
             <Legend />
-            <Line type="monotone" dataKey="speed" stroke="#8884d8" activeDot={{ r: 8 }} />
+            <Line type="monotone" dataKey="speedRadar" stroke="#8884d8" activeDot={{ r: 8 }} />
+            <Line type="monotone" dataKey="speedOdometer" stroke="#82ca9d" />
           </LineChart>
         </ResponsiveContainer>
       </div>

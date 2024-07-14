@@ -1,98 +1,151 @@
-import serial
 import threading
 import time
+from flask import Flask, jsonify
+from flask_socketio import SocketIO, emit
+import csv
 from datetime import datetime
 from flask_cors import CORS
-from flask import Flask
-from flask_socketio import SocketIO
+from serial import Serial
+from motor import MotorController
 
-# Initialize Flask app and SocketIO
-app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins='*')
-CORS(app, origins=["http://localhost:5173"])
+class RFIDApplication:
+    def __init__(self, motor_controller):
+        self.app = Flask(__name__)
+        self.socketio = SocketIO(self.app, cors_allowed_origins='*')
+        CORS(self.app, origins=["http://localhost:5174"])
+        self.motor_controller = motor_controller
+        self.rfid_serial = self._initialize_serial()
+        self.csv_file = 'rfid_log.csv'
+        self._initialize_csv()
 
-# Serial port configuration
-rfid_serial_port = serial.Serial("COM13", 115200)
+        @self.app.route('/')
+        def index():
+            return "RFID Motor Control WebSocket Server"
 
-# Function to format tag ID with spaces
-def format_tag_id(tag_id):
-    return ' '.join(format(byte, '02X') for byte in tag_id)
+        @self.app.route('/health')
+        def health():
+            return jsonify(status="running"), 200
 
-# Function to read tags
-def read_tag(stop_event):
-    tag_names = {
-        b'\xE2\x00\x20\x23\x12\x05\xEE\xAA\x00\x01\x00\x73': "TAG 1",
-        b'\xE2\x00\x20\x23\x12\x05\xEE\xAA\x00\x01\x00\x76': "TAG 2",
-        b'\xE2\x00\x20\x23\x12\x05\xEE\xAA\x00\x01\x00\x90': "TAG 3",
-        b'\xE2\x00\x20\x23\x12\x05\xEE\xAA\x00\x01\x00\x87': "TAG 4",
-        b'\xE2\x00\x20\x23\x12\x05\xEE\xAA\x00\x01\x00\x88': "TAG 5"
-    }
+    def _initialize_serial(self):
+        try:
+            print("Initializing serial port...")
+            return Serial('/dev/ttyUSB0', 115200, timeout=0.1)
+        except Exception as e:
+            print("Error initializing serial port:", e)
+            return None
 
-    while not stop_event.is_set():
-        command = b'\x43\x4D\x02\x02\x00\x00\x00\x00'  # Correct command
-        rfid_serial_port.write(command)
-        data = rfid_serial_port.read(26)
+    def _initialize_csv(self):
+        """Initialize the CSV file with headers if it doesn't already exist."""
+        try:
+            with open(self.csv_file, mode='a', newline='') as file:
+                writer = csv.writer(file)
+                if file.tell() == 0:  # Check if the file is empty
+                    writer.writerow(['Timestamp', 'Status', 'Tag ID', 'Duty Cycle'])
+        except Exception as e:
+            print("Error initializing CSV file:", e)
 
-        if data:
-            for tag, name in tag_names.items():
-                if tag in data:
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    formatted_tag = format_tag_id(tag)
-                    print(name + " detected:", formatted_tag, "at", timestamp)
-                    socketio.start_background_task(target=emit_tag_data, name=name, tag_id=formatted_tag, timestamp=timestamp)
+    def log_to_csv(self, status, tag_id, duty_cycle):
+        """Log RFID data to a CSV file."""
+        try:
+            with open(self.csv_file, mode='a', newline='') as file:
+                writer = csv.writer(file)
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                writer.writerow([timestamp, status, tag_id, duty_cycle])
+        except Exception as e:
+            print("Error logging to CSV file:", e)
+
+    def send_rfid_cmd(self, cmd):
+        try:
+            print(f"Sending RFID command: {cmd}")
+            if self.rfid_serial and self.rfid_serial.is_open:
+                self.rfid_serial.write(bytes.fromhex(cmd))
+                response = self.rfid_serial.read(512)
+                if response:
+                    response_hex = response.hex().upper()
+                    hex_list = [response_hex[i:i+2] for i in range(0, len(response_hex), 2)]
+                    print(f"Received RFID response: {' '.join(hex_list)}")
+                    return ' '.join(hex_list)
+            return None
+        except Exception as e:
+            print("Error sending RFID command:", e)
+            return None
+
+    def rfid_motor_control(self):
+        if self.rfid_serial is None:
+            print("RFID serial port not initialized.")
+            self.motor_controller.stop()
+            return
+
+        duty_cycle = 1 
+        self.motor_controller.set_motor_duty_cycle(duty_cycle)
+
+        try:
+            while True:
+                try:
+                    print("RFID is reading...")  # Added this line
+                    self.log_to_csv("STAND BY", "RFID IS READING", duty_cycle)
+                    tag_data = self.send_rfid_cmd('BB 00 22 00 00 22 7E')
+                    if tag_data:
+                        if 'E2 00 20 23 12 05 EE AA 00 01 00 90' in tag_data:
+                            duty_cycle = 0.5
+                            tag_id = 'E2 00 20 23 12 05 EE AA 00 01 00 90'
+                            name = 'Tag 1'
+                        elif 'E2 00 20 23 12 05 EE AA 00 01 00 87' in tag_data:
+                            duty_cycle = 0.4
+                            tag_id = 'E2 00 20 23 12 05 EE AA 00 01 00 88'
+                            name = 'Tag 2'
+                        elif 'E2 00 20 23 12 05 EE AA 00 01 00 85' in tag_data:
+                            duty_cycle = 0.3
+                            tag_id = 'E2 00 20 23 12 05 EE AA 00 01 00 76'
+                            name = 'Tag 3'
+                        elif 'E2 00 20 23 12 05 EE AA 00 01 00 ' in tag_data:
+                            duty_cycle = 0.2
+                            tag_id = 'E2 00 20 23 12 05 EE AA 00 01 00 84'
+                            name = 'Tag 4'
+                        elif 'E2 00 20 23 12 05 EE AA 00 01 00 62' in tag_data:
+                            duty_cycle = 0
+                            tag_id = 'E2 00 20 23 12 05 EE AA 00 01 00 62'
+                            name = 'Tag 5'
+                        else:
+                            continue
+
+                        print(f"Detected RFID tag: {tag_id}, Name: {name}, Duty Cycle: {duty_cycle}")
+                        self.socketio.emit('rfid_data', {'name': name, 'tag_id': tag_id})
+                        self.log_to_csv(name, tag_id, duty_cycle)
+
+                    print(f"Setting motor duty cycle to: {duty_cycle}")
+                    self.motor_controller.set_motor_duty_cycle(duty_cycle)
+                    time.sleep(0.1)
+                    print("Loop iteration completed")
+                except Exception as e:
+                    print("Error in RFID motor control loop:", e)
+                    self.motor_controller.set_motor_duty_cycle(0)
                     break
-        else:
-            print("No data received")
+        finally:
+            if self.rfid_serial:
+                self.rfid_serial.close()
+            self.motor_controller.stop()
 
-        time.sleep(0.1)
+    def run_flask(self):
+        try:
+            print("Starting Flask server...")
+            self.socketio.run(self.app, host='localhost', port=5000)
+        except Exception as e:
+            print("Error running Flask server:", e)
 
-# Function to emit tag data to WebSocket clients
-def emit_tag_data(name, tag_id, timestamp):
-    print(f"Emitting data: {name}, {tag_id}, {timestamp}")
-    socketio.emit('tag_data', {'timestamp': timestamp, 'name': name, 'tag_id': tag_id})
+    def main(self):
+        try:
+            rfid_thread = threading.Thread(target=self.rfid_motor_control, daemon=True)
+            rfid_thread.start()
+            flask_thread = threading.Thread(target=self.run_flask, daemon=True)
+            flask_thread.start()
+            rfid_thread.join()
+            flask_thread.join()
+        except Exception as e:
+            print("Error in main thread:", e)
+            self.motor_controller.stop()
 
-# Function to stop RFID reading
-def stop_reading(stop_event):
-    stop_event.set()
-    print("Stopping RFID reading...")
-
-# Event object to stop RFID reading
-stop_event = threading.Event()
-
-# Thread to continuously read tags
-rfid_thread = threading.Thread(target=read_tag, args=(stop_event,))
-rfid_thread.start()
-
-@app.route('/')
-def index():
-    return "RFID Reader WebSocket Server"
-
-if __name__ == '__main__':
-    # Start Flask-SocketIO server
-    socketio.run(app, host='localhost', port=5000)
-
-try:
-    while True:
-        user_input = input("Type 'stop' to stop RFID reading: ")
-        if user_input.lower() == 'stop':
-            break
-        time.sleep(0.1)
-finally:
-    # After finishing, call the function to stop RFID reading
-    stop_reading(stop_event)
-    # Wait for the thread to finish
-    rfid_thread.join()
-
-    # Command to stop RFID operation
-    stop_command = b'\x43\x4D\x03\x02\x02\x00\x00\x00\x00'
-    rfid_serial_port.write(stop_command)
-
-    # Read response from the device
-    response = rfid_serial_port.read(10)  # Response length 10 bytes
-    if response == b'\x43\x4D\x03\x03\x03\x00\x00\x00\x00\x00':
-        print("RFID reading successfully stopped.")
-    else:
-        print("Failed to stop RFID reading.")
-
-    # Close serial port
-    rfid_serial_port.close()
+if __name__ == "__main__":
+    motor_controller = MotorController(ena=8, in1=9, in2=10, enb=13, in3=11, in4=12)
+    rfid_app = RFIDApplication(motor_controller)                                                   
+    rfid_app.main()
